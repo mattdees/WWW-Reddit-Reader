@@ -40,15 +40,13 @@ sub set_stop_sub {
 }
 
 sub set_number_of_pages {
-    my ($self, $num_of_pages) = @_;
+    my ( $self, $num_of_pages ) = @_;
     $self->{'num_of_pages'} = $num_of_pages;
 }
 
 sub _go_on {
-    my ($self) = @_;
-    state $counter = 1;
-    $counter++;
-    return 1 if $counter <= $self->{'num_of_pages'};
+    my ( $self, $counter ) = @_;
+    return 1 if $counter < $self->{'num_of_pages'};
 
 }
 
@@ -63,44 +61,32 @@ sub read {
     $self->{'result'} = {};
     my $http = HTTP::Tiny->new( 'agent' => 'Reddit Reader v' . $VERSION );
     foreach my $subreddit ( @{ $self->{'subreddits'} } ) {
-        
-        my $page_url = "http://www.reddit.com/r/$subreddit/top.json?sort=$sort&t=$timeline";
-        print "grabbing page 1: $page_url\n" if $debug;
-        my $res = $http->get($page_url);
+        my ( $parsed_response, $page_url, $next, $res );
+        my $counter = 0;
+        while ( $self->_go_on($counter) ) {
+            $counter++;
+            
+            $page_url = "http://www.reddit.com/r/$subreddit/top.json?sort=$sort&t=$timeline";
 
-        if ( $res->{'status'} != 200 ) {
-            return 'non-200 response recieved';
-        }
-        my $parsed_response = JSON::XS::decode_json( $res->{'content'} );
-        my $next            = $parsed_response->{'data'}->{'after'};
+            if ( $counter > 1 ) {
+                $page_url .= "&after=$next&count=" . $counter * 25;
+            }
 
-        if ( ref $parsed_response->{'data'}->{'children'} eq 'ARRAY' ) {
+            print "grabbing page $counter: $page_url\n" if $debug;
+
+            $res = $http->get($page_url);
+            if ( $res->{'status'} != 200 ) {
+                return 'non-200 response recieved';
+            }
+
+            $parsed_response = JSON::XS::decode_json( $res->{'content'} );
+            $next            = $parsed_response->{'data'}->{'after'};
 
             $self->process_result( $subreddit, $parsed_response->{'data'}->{'children'} );
-            $number_of_pages = 2;
-            my $counter = 1;
-            while ( $self->_go_on() ) {
-                sleep 3;
-                $counter++;
-                print "grabbing page " . $counter . ": " if $debug;
-                my $page_url = "http://www.reddit.com/r/$subreddit/top.json?sort=$sort&t=$timeline&after=$next&count=" . $counter * 25;
-                print $page_url . "\n" if $debug;
-                $res = $http->get($page_url);
-                if ( $res->{'status'} != 200 ) {
-                    return 'non-200 response recieved';
-                }
-
-                $parsed_response = JSON::XS::decode_json( $res->{'content'} );
-                $next            = $parsed_response->{'data'}->{'after'};
-
-                $self->process_result( $subreddit, $parsed_response->{'data'}->{'children'} );
-
-                last if !$next;
-            }
+            last if !$next;
+            sleep 3;
         }
-        else {
-            return 'Reddit API gave an invalid result';
-        }
+
     }
 }
 
